@@ -76,13 +76,42 @@ class EC2Key(CoseKey):
                  d: bytes = b'',
                  optional_params: Optional[dict] = None,
                  allow_unknown_key_attrs: bool = True):
+        """Initialize a COSE key from its components
+
+        Not passing a `y` component is accepted; in this case, one (of the two)
+        valid `y` will be found for the `x`. This is good enough for everything
+        that only operates on the `x` of any derived outputs (in "compact"
+        mode), as per RFC 6090 Section 4.2.
+        """
         transformed_dict = {}
 
         if len(x) == 0 and len(y) == 0 and len(d) == 0:
             raise CoseInvalidKey("Either the public values or the private value must be specified")
 
-        if (len(x) == 0 and len(y) != 0) or (len(x) != 0 and len(y) == 0):
-            raise CoseInvalidKey("Missing public coordinate X/Y")
+        if len(x) == 0:
+            raise CoseInvalidKey("Missing public coordinate X")
+
+        if not y:
+            # FIXME typecast input
+            if crv in (P256, P256.identifier):
+                # FIXME deduplicate into curves themselves
+                eccurve = SECP256R1()
+            else:
+                raise NotImplementedError("Unknown curve")
+
+            # TODO: Find an explicit "load as compact" mechanism in
+            # cryptography, rather than abusing the SEC 1 mechanism
+            key = ec.EllipticCurvePublicKey.from_encoded_point(
+                    eccurve,
+                    # don't care which of the two possible Y values we get
+                    b'\x03' +
+                    x # or [::-1]?
+                    )
+            # Just to check the endianness of the conversions -- if we get the
+            # right X back out, then the X and Y are consistent, and anyway the
+            # crypto backend will check whether the point is on the curve
+            assert x == key.public_numbers().x.to_bytes(32, 'big')
+            y = key.public_numbers().y.to_bytes(32, 'big')
 
         new_dict = dict({KpKty: KtyEC2, EC2KpCurve: crv})
 
